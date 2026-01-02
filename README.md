@@ -76,7 +76,48 @@ The output CSV is always:
 
 Simple liveness endpoint.
 
+
 ---
+
+## What this intentionally does *not* do (v1)
+
+- No schema inference
+- No type coercion
+- No header renaming
+- No row deletion
+- No silent truncation
+- No “best guess” semantic cleanup
+
+Those behaviors belong in downstream, domain-specific layers.
+
+---
+
+## Intended use cases
+
+- Pre-ingestion normalization for data warehouses
+- CI validation of vendor CSV drops
+- Automation pipelines that require deterministic inputs
+- Systems where malformed rows must be reported, not discarded
+- Environments where upstream CSV quality cannot be controlled
+
+---
+
+## Notes
+
+This project was built to solve a real operational problem:
+
+CSV files are ubiquitous, fragile, and frequently malformed — yet most pipelines assume they are clean.
+
+This service makes that assumption explicit, testable, and enforceable.
+
+---
+## Running locally
+
+uvicorn app.main:app --reload
+
+##OpenAPI documentation is available at:
+
+http://127.0.0.1:8000/docs
 
 ## Example response (shape only)
 
@@ -103,44 +144,3 @@ Simple liveness endpoint.
     "errors": []
   }
 }
-
-## What this intentionally does *not* do (v1)
-
-- No schema inference
-- No type coercion
-- No header renaming
-- No row deletion
-- No silent truncation
-- No “best guess” semantic cleanup
-
-Those behaviors belong in downstream, domain-specific layers.
-
----
-
-## Intended use cases
-
-- Pre-ingestion normalization for data warehouses
-- CI validation of vendor CSV drops
-- Automation pipelines that require deterministic inputs
-- Systems where malformed rows must be reported, not discarded
-- Environments where upstream CSV quality cannot be controlled
-
----
-
-## Running locally
-
-```bash
-uvicorn app.main:app --reload
-
-OpenAPI documentation is available at:
-
-```text
-http://127.0.0.1:8000/docs
-
-Notes
-
-## This project was built to solve a real operational problem:
-
-CSV files are ubiquitous, fragile, and frequently malformed — yet most pipelines assume they are clean.
-
-This service makes that assumption explicit, testable, and enforceable.
