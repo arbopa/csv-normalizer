@@ -13,7 +13,8 @@ authors = [
 dependencies = [
   "fastapi",
   "uvicorn",
-  "python-multipart"
+  "python-multipart",
+  "charset-normalizer"
 ]
 
 [project.optional-dependencies]

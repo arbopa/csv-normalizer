@@ -1,4 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from .models import NormalizeResponse, HealthResponse
+from .normalize import normalize_csv_bytes
 
 app = FastAPI(
     title="csv-normalizer",
@@ -6,31 +8,14 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
 
-
-@app.post("/normalize")
+@app.post("/normalize", response_model=NormalizeResponse)
 async def normalize_csv(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=422, detail="Only CSV files are supported")
 
-    # Placeholder: real implementation comes later
-    return {
-        "normalized_csv": None,
-        "report": {
-            "summary": {
-                "rows": None,
-                "columns": None,
-                "warnings": 0,
-                "errors": 0,
-                "deterministic": True,
-            },
-            "normalizations": {},
-            "warnings": [],
-            "errors": [],
-        },
-        "status": "not_implemented_yet",
-    }
+    raw = await file.read()
+    return normalize_csv_bytes(raw)
