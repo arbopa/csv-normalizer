@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import csv
+import io
 from typing import Any, Dict
 
 from charset_normalizer import from_bytes
@@ -80,6 +82,34 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
         "lf": text.count("\n"),
     }
 
+    # --- Delimiter detection + normalization to comma ---
+    sample = text[:4096]
+    detected_delim = ","
+    sniffed = False
+
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t", "|"])
+        detected_delim = dialect.delimiter
+        sniffed = True
+    except Exception:
+        detected_delim = ","  # default
+
+    delim_changed = detected_delim != ","
+
+    if delim_changed:
+        # Re-serialize using comma delimiter
+        inp = io.StringIO(text, newline="")
+        outp = io.StringIO(newline="")
+
+        reader = csv.reader(inp, delimiter=detected_delim)
+        writer = csv.writer(outp, delimiter=",", lineterminator="\n")
+
+        for row in reader:
+            writer.writerow(row)
+
+        text = outp.getvalue()
+
+
     report = {
         "encoding": {
             "detected": detected,
@@ -93,6 +123,13 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
             "before": nl_before,
             "after": nl_after,
             "changed": (nl_before["crlf"] > 0) or (nl_before["cr"] > 0),
+        },
+        "delimiter": {
+            "detected": detected_delim,
+            "output": ",",
+            "sniffed": sniffed,
+            "changed": delim_changed,
+            "notes": "Delimiter normalized to comma.",
         },
     }
 
