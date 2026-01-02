@@ -46,7 +46,7 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
     # If input is UTF-8 and begins with a BOM, decode with utf-8-sig so we don't double-BOM on output.
     if raw.startswith(b"\xef\xbb\xbf") and (decode_used.lower().replace("-", "_") in ("utf_8", "utf8")):
         decode_used = "utf-8-sig"   
-        
+
     decode_fallback = False
 
     try:
@@ -64,6 +64,22 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
 
     normalized = text.encode("utf-8-sig")
 
+    # --- Newline normalization: CRLF/CR -> LF ---
+    nl_before = {
+        "crlf": text.count("\r\n"),
+        "cr": text.count("\r") - text.count("\r\n"),
+        "lf": text.count("\n"),
+    }
+
+    # Normalize to LF
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    nl_after = {
+        "crlf": text.count("\r\n"),
+        "cr": text.count("\r"),
+        "lf": text.count("\n"),
+    }
+
     report = {
         "encoding": {
             "detected": detected,
@@ -71,8 +87,15 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
             "decode_fallback": decode_fallback,
             "output": "utf-8-bom",
             "notes": "Output is UTF-8 with BOM (utf-8-sig) for deterministic downstream handling.",
-        }
+        },
+        "newlines": {
+            "policy": "lf",
+            "before": nl_before,
+            "after": nl_after,
+            "changed": (nl_before["crlf"] > 0) or (nl_before["cr"] > 0),
+        },
     }
+
 
 
     return normalized, report
