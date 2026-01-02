@@ -1,105 +1,84 @@
-# csv-normalizer
+# CSV Normalizer
 
-A small, opinionated CSV normalization service for automation pipelines.
+Deterministic CSV normalization service for automation pipelines and data ingestion workflows.
 
-**Purpose:** take unreliable, real-world CSV input and produce a **deterministic, import-safe CSV** along with a **machine-readable report** describing exactly what was detected, normalized, padded, or rejected.
+This project focuses on **making CSV inputs predictable**, even when source files are messy, inconsistent, or produced by uncontrolled upstream systems.
 
-This project is intentionally narrow in scope. It focuses on correctness, repeatability, and transparency rather than convenience or heuristics.
+It is designed to answer one question reliably:
 
----
-
-## Why this exists
-
-CSV is deceptively simple. In practice, it frequently breaks pipelines due to:
-
-- inconsistent encodings (UTF-8, UTF-8 BOM, Latin-1, Windows codepages)
-- mixed or platform-dependent newlines
-- inconsistent delimiters (`;`, `\t`, `|`)
-- ragged rows (missing or extra columns)
-- quoting edge cases that break downstream parsers
-
-Most tools either fail fast or silently guess.
-
-**csv-normalizer takes a different approach:**
-
-- Normalize structure deterministically
-- Apply explicit, documented rules
-- Never silently guess when data is ambiguous
-- Surface every correction and every violation in a report
-
-This makes it suitable for CI, ingestion pipelines, and automated import workflows where reproducibility matters.
+> **“Can I safely feed this CSV into downstream systems without surprises?”**
 
 ---
 
-## Design stance (important)
+## What this does (intentionally and explicitly)
 
-This service is **not** an ETL framework and **not** a schema inference tool.
+Given an uploaded CSV file, the service:
 
-It is designed to be a *first-stage sanitizer* that produces:
+- **Normalizes encoding**
+  - Detects input encoding
+  - Outputs **UTF-8 with BOM (`utf-8-sig`)** consistently
+- **Normalizes newlines**
+  - Converts CRLF / CR → LF
+- **Normalizes delimiter**
+  - Detects common delimiters (`;`, `,`, `\t`, `|`)
+  - Outputs comma-delimited CSV
+- **Enforces rectangular shape**
+  - Determines expected column count from the header
+  - **Short rows are padded**
+  - **Long rows are preserved but reported as errors**
+- **Preserves data determinism**
+  - The same input always produces the same output bytes
+- **Produces a structured report**
+  - What was detected
+  - What was changed
+  - What rows were padded
+  - What rows exceeded expected width
 
-1. A CSV that downstream systems can safely parse
-2. A report that downstream systems (or humans) can reason about
-
-If something cannot be normalized safely, it is **left unchanged or flagged**, never guessed.
-
----
-
-## What v1 does (current behavior)
-
-Given an input CSV, the service:
-
-### Encoding
-- Detects encoding using `charset-normalizer`
-- Decodes using the detected encoding (with safe fallbacks)
-- Outputs **UTF-8 with BOM (`utf-8-sig`)** for deterministic downstream handling
-
-### Newlines
-- Normalizes all line endings to `LF`
-- Reports before/after counts (`CRLF`, `CR`, `LF`)
-
-### Delimiter
-- Attempts delimiter detection (``, `;`, `\t`, `|`)
-- Normalizes output to **comma-delimited**
-- Reports whether detection was sniffed or defaulted
-
-### Row width (rectangularization)
-- Uses the header row to establish expected column count
-- Short rows are **padded** (deterministically) and reported as warnings
-- Long rows are **preserved but flagged as errors**
-- No rows are dropped or reordered
-
-### Output
-- Returns the normalized CSV as Base64
-- Includes a SHA-256 hash of the normalized output
-- Returns a detailed normalization report
+This service does **not** attempt to guess business meaning, clean values, or “fix” bad data silently.  
+All ambiguity is surfaced explicitly in the report.
 
 ---
 
-## Explicit non-goals (by design)
+## Design principles
 
-This project does **not**:
+- Deterministic over clever
+- Report, don’t hide
+- Normalize format, not semantics
+- Automation-first behavior
+- Errors are data issues, not transport failures
 
-- infer column semantics or data types
-- interpret locale-specific dates or numbers
-- apply per-customer business rules
-- validate against user-provided schemas
-- “fix” ambiguous values silently
-- guarantee Excel’s visual rendering behavior
+A file with data problems still returns HTTP `200`.  
+Those problems are surfaced in the response body, not through HTTP status codes.
 
-Those concerns belong downstream, using the report this service produces.
+This makes the service suitable for CI pipelines, batch jobs, and ingestion systems that must continue running while capturing data quality issues.
 
 ---
 
-## API
+## API overview
 
 ### `POST /normalize`
 
-**Input**
+Accepts a CSV file as `multipart/form-data` and returns:
 
-- `multipart/form-data`
-- Field: `file` (raw CSV bytes)
+- Base64-encoded normalized CSV bytes
+- SHA-256 hash of the normalized output
+- Detailed normalization report
+- Structured warnings and errors
 
-**Output**
+The output CSV is always:
+
+- UTF-8 with BOM
+- LF newlines
+- Comma-delimited
+- Rectangular
+
+### `GET /health`
+
+Simple liveness endpoint.
+
+---
+
+## Example response (shape only)
 
 ```json
 {
@@ -110,19 +89,17 @@ Those concerns belong downstream, using the report this service produces.
   },
   "report": {
     "summary": {
-      "rows": null,
-      "columns": null,
       "warnings": 8,
       "errors": 3,
       "deterministic": true
     },
     "normalizations": {
-      "encoding": { ... },
-      "newlines": { ... },
-      "delimiter": { ... },
-      "row_width": { ... }
+      "encoding": {},
+      "newlines": {},
+      "delimiter": {},
+      "row_width": {}
     },
-    "warnings": [ ... ],
-    "errors": [ ... ]
+    "warnings": [],
+    "errors": []
   }
 }
