@@ -2,55 +2,91 @@
 
 A small, opinionated CSV normalization service for automation pipelines.
 
-**Goal:** turn “messy CSV that breaks imports/parsers” into a deterministic, import-safe CSV **plus** a machine-readable report of what changed and what was ambiguous.
+**Purpose:** take unreliable, real-world CSV input and produce a **deterministic, import-safe CSV** along with a **machine-readable report** describing exactly what was detected, normalized, padded, or rejected.
 
-This is intentionally **not** an ETL platform, not a schema mapper, and not a business-rule validator.
+This project is intentionally narrow in scope. It focuses on correctness, repeatability, and transparency rather than convenience or heuristics.
 
 ---
 
 ## Why this exists
 
-Real-world CSVs are often inconsistent (dialect, quoting, encoding, row length, headers, dates). Most tools either fail, require complex configuration, or silently guess.
+CSV is deceptively simple. In practice, it frequently breaks pipelines due to:
 
-**csv-normalizer** takes a different stance:
+- inconsistent encodings (UTF-8, UTF-8 BOM, Latin-1, Windows codepages)
+- mixed or platform-dependent newlines
+- inconsistent delimiters (`;`, `\t`, `|`)
+- ragged rows (missing or extra columns)
+- quoting edge cases that break downstream parsers
 
-- Normalize the structure deterministically
-- **Never guess** when data is ambiguous
-- Report every correction and every ambiguity
+Most tools either fail fast or silently guess.
 
-This makes it safe to use in CI/ETL/import pipelines where reproducibility matters.
+**csv-normalizer takes a different approach:**
 
----
+- Normalize structure deterministically
+- Apply explicit, documented rules
+- Never silently guess when data is ambiguous
+- Surface every correction and every violation in a report
 
-## Contract (v1)
-
-Given an input CSV, the service produces:
-
-- A **deterministic normalized CSV**
-  - consistent delimiter + quoting rules
-  - consistent column count (row length)
-  - normalized headers
-  - normalized encoding (UTF-8 with BOM)
-- A **machine-readable normalization report**
-  - what was detected
-  - what was changed
-  - what was ambiguous (and therefore left unchanged)
-
-**Non-negotiable rule:** if a value cannot be normalized safely, it is **not guessed**. It is left as-is and flagged in the report.
+This makes it suitable for CI, ingestion pipelines, and automated import workflows where reproducibility matters.
 
 ---
 
-## Non-goals (intentional)
+## Design stance (important)
 
-This project does **not** attempt to:
+This service is **not** an ETL framework and **not** a schema inference tool.
 
-- infer business semantics (“this column is currency”)
-- do per-customer configuration / rules DSL
+It is designed to be a *first-stage sanitizer* that produces:
+
+1. A CSV that downstream systems can safely parse
+2. A report that downstream systems (or humans) can reason about
+
+If something cannot be normalized safely, it is **left unchanged or flagged**, never guessed.
+
+---
+
+## What v1 does (current behavior)
+
+Given an input CSV, the service:
+
+### Encoding
+- Detects encoding using `charset-normalizer`
+- Decodes using the detected encoding (with safe fallbacks)
+- Outputs **UTF-8 with BOM (`utf-8-sig`)** for deterministic downstream handling
+
+### Newlines
+- Normalizes all line endings to `LF`
+- Reports before/after counts (`CRLF`, `CR`, `LF`)
+
+### Delimiter
+- Attempts delimiter detection (``, `;`, `\t`, `|`)
+- Normalizes output to **comma-delimited**
+- Reports whether detection was sniffed or defaulted
+
+### Row width (rectangularization)
+- Uses the header row to establish expected column count
+- Short rows are **padded** (deterministically) and reported as warnings
+- Long rows are **preserved but flagged as errors**
+- No rows are dropped or reordered
+
+### Output
+- Returns the normalized CSV as Base64
+- Includes a SHA-256 hash of the normalized output
+- Returns a detailed normalization report
+
+---
+
+## Explicit non-goals (by design)
+
+This project does **not**:
+
+- infer column semantics or data types
+- interpret locale-specific dates or numbers
+- apply per-customer business rules
 - validate against user-provided schemas
-- silently fix ambiguous dates/locales
-- guarantee how Excel visually renders values
+- “fix” ambiguous values silently
+- guarantee Excel’s visual rendering behavior
 
-If you need those, build them downstream using the report output from this service.
+Those concerns belong downstream, using the report this service produces.
 
 ---
 
@@ -58,36 +94,35 @@ If you need those, build them downstream using the report output from this servi
 
 ### `POST /normalize`
 
-**Input:** `multipart/form-data` with `file` field containing CSV bytes.
+**Input**
 
-**Output:** JSON with:
-- `normalized_csv` (artifact reference)
-- `report` (normalization details)
+- `multipart/form-data`
+- Field: `file` (raw CSV bytes)
 
-Example response shape:
+**Output**
 
 ```json
 {
   "normalized_csv": {
     "sha256": "…",
-    "download_url": "…"
+    "encoding": "utf-8-sig",
+    "content_b64": "…"
   },
   "report": {
-    "summary": { "rows": 10432, "columns": 18, "warnings": 7, "errors": 0 },
-    "normalizations": {
-      "encoding": { "from": "latin-1", "to": "utf-8-bom" },
-      "delimiter": { "detected": ";", "normalized_to": "," },
-      "headers": { "Order Date ": "order_date", "Customer-ID": "customer_id" }
+    "summary": {
+      "rows": null,
+      "columns": null,
+      "warnings": 8,
+      "errors": 3,
+      "deterministic": true
     },
-    "warnings": [
-      {
-        "row": 341,
-        "column": "invoice_date",
-        "issue": "ambiguous_date_format",
-        "value": "03/04/2024",
-        "action": "left_unchanged"
-      }
-    ],
-    "errors": []
+    "normalizations": {
+      "encoding": { ... },
+      "newlines": { ... },
+      "delimiter": { ... },
+      "row_width": { ... }
+    },
+    "warnings": [ ... ],
+    "errors": [ ... ]
   }
 }
