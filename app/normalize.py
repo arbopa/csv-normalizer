@@ -34,6 +34,9 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
     - If decode fails, fall back to UTF-8 with replacement characters and report it.
     - Always output utf-8-sig bytes.
     """
+    warnings: list[dict] = []
+    errors: list[dict] = []
+
     detected = None
     confidence = None
 
@@ -63,8 +66,6 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
             # Last resort: decode with replacement so pipeline can continue deterministically
             text = raw.decode(decode_used, errors="replace")
             decode_fallback = True
-
-    normalized = text.encode("utf-8-sig")
 
     # --- Newline normalization: CRLF/CR -> LF ---
     nl_before = {
@@ -101,7 +102,7 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
         inp = io.StringIO(text, newline="")
         outp = io.StringIO(newline="")
 
-        reader = csv.reader(inp, delimiter=detected_delim)
+        reader = csv.reader(inp, delimiter=",")
         writer = csv.writer(outp, delimiter=",", lineterminator="\n")
 
         for row in reader:
@@ -109,6 +110,62 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
 
         text = outp.getvalue()
 
+    # --- Row width enforcement (rectangularize) ---
+    width_expected = None
+    width_short_rows = 0
+    width_long_rows = 0
+    total_rows = 0
+    total_cols_max = 0
+
+    inp = io.StringIO(text, newline="")
+    outp = io.StringIO(newline="")
+
+    reader = csv.reader(inp, delimiter=detected_delim)
+    writer = csv.writer(outp, delimiter=",", lineterminator="\n")
+
+    rows = list(reader)
+    if rows:
+        width_expected = len(rows[0])
+
+    for i, row in enumerate(rows):
+        total_rows += 1
+        total_cols_max = max(total_cols_max, len(row))
+
+        if width_expected is None:
+            width_expected = len(row)
+
+        if len(row) < width_expected:
+            width_short_rows += 1
+            orig_len = len(row)
+
+            # pad
+            row = row + [""] * (width_expected - orig_len)
+
+            # record warning (use original length)
+            warnings.append({
+                "row": i + 1,
+                "column": None,
+                "issue": "row_too_short",
+                "value": str(orig_len),
+                "action": f"padded_to_{width_expected}",
+            })
+
+
+        elif len(row) > width_expected:
+            width_long_rows += 1
+            errors.append({
+                "row": i + 1,
+                "column": None,
+                "issue": "row_too_long",
+                "value": str(len(row)),
+                "action": f"expected_{width_expected}",
+            })
+
+        writer.writerow(row)
+
+    text = outp.getvalue()
+
+    normalized = text.encode("utf-8-sig")
 
     report = {
         "encoding": {
@@ -131,11 +188,22 @@ def normalize_encoding_to_utf8_bom(raw: bytes) -> tuple[bytes, Dict[str, Any]]:
             "changed": delim_changed,
             "notes": "Delimiter normalized to comma.",
         },
+        "row_width": {
+            "expected_columns": width_expected,
+            "short_rows_padded": width_short_rows,
+            "long_rows_errors": width_long_rows,
+            "total_rows": total_rows,
+            "max_columns_seen": total_cols_max,
+            "policy": {
+                "short_rows": "pad",
+                "long_rows": "error",
+                "output_columns": "expected_columns",
+            },
+        },
     }
 
+    return normalized, report, warnings, errors
 
-
-    return normalized, report
 
 
 def normalize_csv_bytes(raw: bytes) -> Dict[str, Any]:
@@ -143,7 +211,7 @@ def normalize_csv_bytes(raw: bytes) -> Dict[str, Any]:
     v1: only encoding normalization + report.
     Returns a dict matching the API's response envelope.
     """
-    normalized_bytes, enc_report = normalize_encoding_to_utf8_bom(raw)
+    normalized_bytes, enc_report, warnings, errors = normalize_encoding_to_utf8_bom(raw)
 
     b64 = base64.b64encode(normalized_bytes).decode("ascii")
     return {
@@ -156,12 +224,12 @@ def normalize_csv_bytes(raw: bytes) -> Dict[str, Any]:
             "summary": {
                 "rows": None,
                 "columns": None,
-                "warnings": 0,
-                "errors": 0,
+                "warnings": len(warnings),
+                "errors": len(errors),
                 "deterministic": True,
             },
             "normalizations": enc_report,
-            "warnings": [],
-            "errors": [],
+            "warnings": warnings,
+            "errors": errors,
         },
     }
